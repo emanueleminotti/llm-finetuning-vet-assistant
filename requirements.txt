@@ -1,0 +1,26 @@
+# Environment used for the reported runs (Google Colab, NVIDIA T4, CUDA 12.8).
+#
+# On Colab the notebook installs Unsloth from the nightly branch, which resolves
+# its own pinned dependency set. This file reproduces the same environment
+# outside Colab. Install PyTorch first, matched to your CUDA version:
+#
+#   pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements.txt
+
+unsloth==2025.11.6
+transformers==4.57.3
+trl>=0.12,<0.26
+peft>=0.14
+accelerate>=1.0
+datasets>=3.0
+bitsandbytes>=0.45
+huggingface-hub>=0.28
+
+# Metrics and plotting
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+
+# Notebook runtime
+jupyterlab>=4.0
+ipywidgets>=8.1

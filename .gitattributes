@@ -1,0 +1,10 @@
+# Normalize line endings in the repository to LF.
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary
+*.jsonl text eol=lf
+
+# Treat notebooks as data: keeps diffs readable and excludes them from
+# GitHub's language statistics.
+*.ipynb text eol=lf linguist-documentation

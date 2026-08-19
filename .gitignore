@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# Model artifacts and checkpoints (never commit weights)
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+checkpoint-*/
+outputs/
+models/
+lora_model/
+llama.cpp/
+
+# Datasets (only the documented sample is tracked)
+data/*.jsonl
+!data/vetai_dataset.sample.jsonl
+
+# Credentials
+.env
+*.token
+.huggingface/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/

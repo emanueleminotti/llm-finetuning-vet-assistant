@@ -1,180 +1,232 @@
-# ID2223 Scalable Machine Learning - Lab 2: Fine-Tuning & Deployment of LLMs
+# VetAI — Fine-Tuning Llama 3 into a Veterinary Assistant
 
-**Authors:** Emanuele Minotti, Stefano Romano
+Fine-tunes a quantized **Llama 3.1 8B** into a pet-care assistant that answers
+owners' questions in a supportive, non-diagnostic tone — and runs on CPU-only
+hardware.
 
-## 🎯 Project Overview
+General-purpose chat models are helpful but generic: they either refuse
+pet-health questions or answer with clinical detail an owner cannot act on. This
+project shows the full path from a base checkpoint to a deployed domain
+assistant — instruction tuning, domain adaptation, evaluation, quantization and
+deployment — on a **single free Google Colab T4**, with no GPU at serving time.
 
-This laboratory focuses on the full pipeline of **Fine-Tuning Large Language Models (LLMs)** using Parameter-Efficient Fine-Tuning (PEFT) techniques. Our goal was to transform general-purpose base models into instruction-following assistants and, subsequently, domain-specific experts.
+Built as Lab 2 of KTH's *ID2223 Scalable Machine Learning and Deep Learning*.
 
-The project is divided into two main stages:
-1. **Model Exploration & Benchmarking:** Fine-tuning and comparing three different model sizes (1B, 3B, and 8B) on a general instruction dataset to analyze scaling laws and performance.
-2. **Domain Adaptation (VetAI):** Further specializing the best-performing model on a veterinary dataset to create a targeted medical assistant.
+👉 **Live demo:** https://huggingface.co/spaces/stromano02/Iris
+(Hugging Face Space; it sleeps when idle and takes a few seconds to wake up.)
 
-We utilized the **Unsloth** library for efficient training with 4-bit quantization and exported the final models to **GGUF** format for CPU-based inference via a user interface.
+📦 **Model weights:** https://huggingface.co/stromano02/model
+(merged 16-bit safetensors + `q8_0` GGUF.)
 
 ---
 
-## 📊 Stage 1: Model Selection & Performance Analysis
+## Features
 
-We adopted a model-centric approach to improve performance. Instead of relying on a single configuration, we trained three distinct models using the **FineTome-100k** dataset. We experimented with increasing parameter counts and adjusted LoRA hyperparameters (Rank `r` and Alpha `lora_alpha`) to balance training efficiency with model expressivity.
+- **Two-stage fine-tuning.** Instruction tuning on FineTome-100k, then a short
+  low-learning-rate pass on ~100 curated veterinary dialogues to shift tone and
+  domain vocabulary without catastrophic forgetting.
+- **Fits on free-tier hardware.** 4-bit NF4 quantization plus LoRA adapters
+  (`r=32`) make an 8B model trainable in the 16 GB of a Colab T4: ~84M trainable
+  parameters, about 1% of the model.
+- **Measured, not assumed.** A held-out split gives validation loss and
+  perplexity every 50 steps, so model selection is a number rather than a
+  vibe — three model sizes were trained and compared.
+- **Loss on completions only.** User turns are masked so the model learns to
+  answer, not to imitate prompts.
+- **Resumable training.** Checkpoints land on Google Drive every 50 steps, which
+  survives Colab recycling a session mid-run.
+- **CPU deployment path.** The best adapters are merged back into the base
+  weights and exported to 8-bit GGUF for `llama.cpp`, served from a Hugging Face
+  Space with no GPU.
 
-To ensure an objective evaluation, we split the dataset into training and testing sets, monitoring **Validation Loss** and **Perplexity** every 50 steps.
+## Results
 
-### 🔹 Comparative Results
+| Base model | LoRA rank / alpha | Lowest val loss | Best perplexity |
+|---|:---:|:---:|:---:|
+| Llama-3.2-1B-Instruct | 16 / 16 | 0.8906 | 2.4366 |
+| Llama-3.2-3B-Instruct | 16 / 16 | 0.7266 | 2.0680 |
+| **Meta-Llama-3.1-8B-Instruct** | 32 / 32 | **0.6474** | **1.9106** |
 
-The table below summarizes the hyperparameters used and the best metrics achieved for each model configuration:
-
-| Model | LoRA Rank | LoRA Alpha | Learning Rate | Train Batch Size | Grad. Accum. | Lowest Val Loss | Best Perplexity |
-|:-----:|:---------:|:----------:|:-------------:|:----------------:|:------------:|:---------------:|:---------------:|
-| **Llama-3.2-1B** | 16 | 16 | 2e-4 | 2 | 4 | **0.8906** | **2.4366** |
-| **Llama-3.2-3B** | 16 | 16 | 2e-4 | 2 | 4 | **0.7266** | **2.0680** |
-| **Meta-Llama-3.1-8B** | 32 | 32 | 1e-4 | 1 | 8 | **0.6474** | **1.9106** |
-
-### 📝 Analysis
-
-The empirical results provide clear evidence of the benefits of model scaling and hyperparameter tuning:
-
-1.  **Scaling Impact:** There is a consistent improvement in downstream performance as model capacity increases.
-    * Moving from the **1B** to the **3B** model resulted in a significant **21% reduction** in perplexity.
-    * Scaling further from **3B** to **8B** yielded an additional **7.6% reduction**.
-2.  **LoRA Parameterization:** For the largest model (8B), we increased the LoRA Rank and Alpha to 32 (compared to 16 for smaller models). This allowed the adapter to learn more complex patterns, contributing to the superior validation loss of **0.6474**.
-
-### 📈 Training Curves
-
-Each model was trained for **500 steps** to fit within compute constraints while ensuring convergence. The plots below visualize the validation loss and perplexity trends, showing smooth convergence for the larger models.
+Perplexity improves 15.1% from 1B to 3B and a further 7.6% from 3B to 8B, so the
+8B configuration was the one carried through domain adaptation and deployment.
 
 | Llama-3.2-1B | Llama-3.2-3B | Meta-Llama-3.1-8B |
-|:------------:|:------------:|:-----------------:|
-| ![1b plot](plots/1b.png) | ![3b plot](plots/3b.png) | ![8b plot](plots/8b.png) |
+|:---:|:---:|:---:|
+| ![1B validation curves](docs/results/1b.png) | ![3B validation curves](docs/results/3b.png) | ![8B validation curves](docs/results/8b.png) |
 
----
+A manual benchmark on five fixed prompts (conceptual clarity, transitive
+reasoning, concision, empathy, arithmetic), the scores, the full model
+transcripts and an honest account of what that benchmark does **not** prove are
+in **[docs/evaluation.md](docs/evaluation.md)**.
 
-## 🐶 Stage 2: Domain-Specific Fine-Tuning (VetAI)
+## Tech stack
 
-After identifying **Meta-Llama-3.1-8B** as the most capable model based on the metrics above, we proceeded to the second phase of the laboratory: domain adaptation.
+| Layer | Choice |
+|---|---|
+| Base models | Meta-Llama-3.1-8B-Instruct, Llama-3.2-3B/1B-Instruct (4-bit NF4) |
+| Training | [Unsloth](https://github.com/unslothai/unsloth) 2025.11.6, TRL `SFTTrainer`, PEFT LoRA (rsLoRA) |
+| Framework | PyTorch 2.9.1 + CUDA 12.8, Transformers 4.57.3, Datasets |
+| Optimizer | `adamw_8bit` (bitsandbytes), linear schedule, gradient checkpointing |
+| Data | [FineTome-100k](https://huggingface.co/datasets/mlabonne/FineTome-100k) (10k slice) + a custom veterinary JSONL set |
+| Metrics | pandas / NumPy / Matplotlib |
+| Serving | GGUF `q8_0` via `llama.cpp`, Hugging Face Spaces (CPU) |
+| Hardware | 1× NVIDIA T4, 16 GB (Google Colab free tier) |
 
-Our objective was to build the engine for a **Veterinary Assistant App**. General-purpose instruction tuning makes the model helpful, but not necessarily expert in medical advice for pets.
+## Getting started
 
-### Approach
-We performed a second stage of fine-tuning (SFT) using a specialized dataset:
-* **Base Model:** The checkpoint of our fine-tuned Llama-3.1-8B.
-* **Dataset:** A curated collection of veterinary questions and answers (pet health, nutrition, and emergency advice).
-* **Technique:** We continued the training process for an additional epoch with a lower learning rate (`5e-5`) to refine the weights without catastrophic forgetting of general conversation abilities.
+The notebook is written for Google Colab, which is where the reported runs were
+executed.
 
-This two-stage process resulted in a model that maintains the conversational fluency of Llama-3.1 but possesses specific knowledge about animal care.
+### Run it on Colab (recommended)
 
----
+1. Open `notebooks/01_llama3_finetuning_vetai.ipynb` in Colab and select a
+   **T4 GPU** runtime (*Runtime → Change runtime type → T4*).
+2. Edit the configuration cell at the top:
+   ```python
+   OUTPUT_DIR = "/content/drive/MyDrive/llama3-8b-vetai"
+   VETAI_DATASET_PATH = f"{OUTPUT_DIR}/vetai_dataset_100.jsonl"
+   HF_REPO = "your-username/your-model"
+   RESUME_FROM_CHECKPOINT = False
+   ```
+3. Put your veterinary dataset at `VETAI_DATASET_PATH`. The schema and a
+   three-line sample are in [`data/`](data/README.md).
+4. Authenticate with the Hub *before* the export cells, so no token ever lives
+   in the notebook:
+   ```python
+   from huggingface_hub import login
+   login()  # or set the HF_TOKEN environment variable
+   ```
+5. Run all cells. Full run time is roughly 4–5 hours on a T4: ~2 h of training,
+   the rest merging and converting the 8.5 GB GGUF.
 
-## 📊 Quantitative Evaluation & Benchmarks
+### Run it locally
 
-To systematically assess the behavior of the evaluated models, we relied on a fixed set of five baseline questions designed to probe different dimensions of reasoning, communication, and alignment with the intended assistant role.
+Needs a CUDA GPU with ≥16 GB of VRAM.
 
-### Evaluation Dimensions
-The questions were selected to isolate complementary dimensions of model performance:
-1.  **Conceptual Understanding:** Explaining preventive vs. reactive care.
-2.  **Logical Reasoning:** A transitive logic puzzle involving animal weights.
-3.  **Language Clarity:** Rewriting a sentence for conciseness.
-4.  **Empathy & Tone:** Drafting a supportive message for an anxious user.
-5.  **Math Reasoning:** A multi-step calculation unit conversion.
+```bash
+git clone https://github.com/emanueleminotti/llm-finetuning-vet-assistant.git
+cd llm-finetuning-vet-assistant
 
-### Quantitative Scores (0–10)
+python -m venv .venv && source .venv/bin/activate
+pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
 
-The following table summarizes the performance based on manual evaluation criteria:
+jupyter lab notebooks/01_llama3_finetuning_vetai.ipynb
+```
 
-| Model | Concept Clarity | Logical Reasoning | Language Quality | Empathy | Safety |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **LLaMA-1B** | 6 | 5 | 6 | 4 | 5 |
-| **LLaMA-3B** | 7 | 6 | 7 | 6 | 6 |
-| **LLaMA-8B-FT** | **9** | **9** | **9** | **9** | **9** |
+Remove the first cell (`drive.mount`) and point `OUTPUT_DIR` at a local
+directory.
 
+## Usage example
 
+Inference against the fine-tuned adapters. `generate()` is the helper defined in
+the notebook (section 7):
 
-### Evaluation Summary
-The quantitative results highlight a clear performance gradient across model sizes and training stages.
-* **LLaMA-1B:** Demonstrates basic comprehension but lacks expressive richness and consistent tone, particularly in empathetic or safety-sensitive contexts.
-* **LLaMA-3B:** Shows noticeable improvements in structure, coherence, and emotional tone, though occasional reasoning inconsistencies remain.
-* **LLaMA-8B-Finetuned:** Achieves the strongest overall results. It consistently offers precise conceptual explanations, correct logical deductions, and clear language. Its supportive responses are natural and appropriately empathetic, maintaining safe, non-diagnostic behavior. These gains illustrate the combined impact of increased model capacity and targeted domain fine-tuning.
+```python
+from unsloth import FastLanguageModel
 
----
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name=OUTPUT_DIR,  # base model + trained LoRA adapters
+    max_seq_length=2048,
+    load_in_4bit=True,
+)
+FastLanguageModel.for_inference(model)
 
-## 📝 ANNEX — Full Benchmark Responses
+print(generate("I'm worried because my dog has been acting differently lately."))
+```
 
-Below are the complete verbatim responses provided by the three models when evaluated on the fixed baseline questions.
+Actual output from the benchmark run (full transcripts in
+[docs/evaluation.md](docs/evaluation.md)):
 
-### 1. Conceptual Understanding
-*Question: Explain the difference between preventive care and reactive care in pet health, using simple and general terms.*
+```text
+It's completely understandable to feel worried when your dog acts differently.
+Behavior changes can feel unsettling. Try offering a calm environment and observe
+things gently over time. If the change continues, a veterinarian can help you
+understand what might be going on.
+```
 
-> **LLaMA-1B:** Preventive care focuses on maintaining the health of pets in the long term... It's like the difference between a car accident and a minor fender bender.
->
-> **LLaMA-3B:** Preventive care focuses on maintaining your pet's health... Reactive care is about addressing issues that have already developed... Think of it like this: Preventive care is like building a strong foundation for your home.
->
-> **LLaMA-8B-FT:** Preventive care is the routine care you give your pet to keep them healthy over time... Reactive care happens after something has already changed or gone wrong. In simple terms: preventive care avoids problems; reactive care responds to them.
+Note the two behaviours the domain pass was meant to produce: an empathetic
+opening, and a referral to a vet instead of a guess at a diagnosis.
 
-### 2. Logical Reasoning
-*Question: You have three animals: a cat, a dog, and a rabbit. The cat is lighter than the dog, and the dog is heavier than the rabbit. Which animal is the lightest, and which is the heaviest?*
+Serving the GGUF export on CPU instead:
 
-> **LLaMA-1B:** The cat is the lightest, and the dog is the heaviest.
->
-> **LLaMA-3B:** The rabbit is the lightest, the cat is in the middle, and the dog is the heaviest.
->
-> **LLaMA-8B-FT:** The rabbit is the lightest, the cat is in the middle, and the dog is the heaviest.
+```bash
+./llama-cli -m llama-3.1-8b-vetai-q8_0.gguf \
+  -p "How often should I brush my cat?" -n 128
+```
 
-### 3. Language Clarity
-*Question: Rewrite the sentence: “A healthy pet requires consistent care, proper nutrition, and regular attention to its behavior.”*
+## How it works
 
-> **LLaMA-1B:** “A healthy pet needs consistent care, proper nutrition, and regular attention to its behavior.”
->
-> **LLaMA-3B:** "To keep a pet healthy, provide regular care, nutritious food, and monitor its behavior."
->
-> **LLaMA-8B-FT:** “A healthy pet needs steady care, balanced nutrition, and attention to its behavior.”
+```
+Meta-Llama-3.1-8B-Instruct (4-bit NF4)
+        │
+        ├─ + LoRA adapters (r=32, α=32, rsLoRA) ── ~84M trainable params (1%)
+        │
+        ▼
+Stage 1 — instruction tuning
+   FineTome-100k, 10k conversations (9k train / 1k val)
+   500 steps · lr 1e-4 · effective batch 8 · loss on completions only
+   eval + checkpoint every 50 steps → best val loss 0.6474
+        │
+        ▼
+Stage 2 — domain adaptation (VetAI)
+   ~100 veterinary dialogues (88 train / 10 val)
+   1 epoch · 44 steps · lr 5e-5
+        │
+        ▼
+Export
+   merge adapters → 16-bit → GGUF q8_0 (8.5 GB, 292 tensors)
+        │
+        ▼
+Hugging Face Space (llama.cpp, CPU-only)
+```
 
-### 4. Empathy and Tone Control
-*Question: Write a supportive message for someone who feels anxious about their future (Context: Pet owner worried about dog acting differently).*
+### Design decisions
 
-> **LLaMA-1B:** It’s understandable to feel worried when your dog behaves differently. Try observing the changes calmly...
->
-> **LLaMA-3B:** It makes sense to feel uneasy when your dog acts differently. Sudden changes can be stressful... Try to stay calm, give your dog a quiet and comfortable space...
->
-> **LLaMA-8B-FT:** It’s completely understandable to feel worried when your dog acts differently. Behavior changes can feel unsettling. Try offering a calm environment and observe things gently over time. If the change continues, a veterinarian can help...
+- **LoRA over full fine-tuning.** Full fine-tuning of an 8B model needs an order
+  of magnitude more VRAM than a T4 has. LoRA on the attention and MLP
+  projections keeps the trainable set at ~1% of the weights; rank-stabilized
+  LoRA keeps the update scale sane at `r=32`.
+- **500 steps, deliberately.** Colab's free tier reclaims runtimes after a few
+  hours, so the step budget was set to finish inside that window. The validation
+  curves flatten well before the end, so more steps would have bought little.
+- **Higher rank for the larger model only.** The 8B run used `r=32` and a lower
+  learning rate (1e-4 vs 2e-4) — more adapter capacity, smaller steps. This
+  means the 1B/3B/8B comparison varies two things at once and measures whole
+  configurations rather than isolating scale.
+- **A second, tiny training pass instead of one mixed dataset.** Sequential
+  tuning keeps the two stages independently reproducible and lets the domain pass
+  use its own learning rate. The cost is a risk of drift on general ability,
+  mitigated by 5e-5 and a single epoch.
+- **Best checkpoint, not last.** `load_best_model_at_end=True` means the exported
+  weights are the ones that scored best on the held-out split.
+- **GGUF q8_0 for serving.** The target Space has no GPU. 8-bit keeps quality
+  close to the merged 16-bit weights while halving the file size, and
+  `llama.cpp` runs it on CPU.
 
-### 5. Math Reasoning
-*Question: If a dog eats 250 grams of food per day, how many kilograms does it eat in a 30-day month?*
+### Known limitations
 
-> **LLaMA-1B:** It eats 250 * 30 = 7500 grams... 7500 / 1000 = 7.5 kg.
->
-> **LLaMA-3B:** To find out how many kilograms your dog eats... 250 grams is 0.25 kilograms. Then, multiply 0.25 kilograms by 30 days: 0.25 x 30 = 7.5 kilograms.
->
-> **LLaMA-8B-FT:** 250g = 0.25kg. 0.25 × 30 = **7.5 kg**.
+- The veterinary dataset is ~100 examples: enough to shape tone, not enough to
+  add clinical knowledge. The assistant is a communication layer, not a
+  diagnostic tool.
+- The manual benchmark is a five-prompt, single-run, author-scored sanity check.
+  See [docs/evaluation.md](docs/evaluation.md) for what it does and does not
+  support.
+- The veterinary dataset itself is not redistributed; only its schema and a
+  sample are in `data/`.
 
----
+## Repository layout
 
-## 🔑 Key Takeaways
+```
+notebooks/01_llama3_finetuning_vetai.ipynb   end-to-end pipeline
+data/README.md                               dataset schema + sample
+docs/evaluation.md                           metrics, benchmark, transcripts
+docs/results/                                validation curves (1B / 3B / 8B)
+requirements.txt                             pinned environment
+```
 
-The comparative analysis leads to three primary conclusions regarding model architecture and training strategies:
+## Authors
 
-* **Parameter Scale & Reasoning Capabilities:**
-    The distinct performance gap between the 1B and 8B models—particularly in the logical reasoning task (the animal weight puzzle)—reinforces the correlation between parameter count and the ability to handle transitive logic. While smaller models can mimic language patterns, they struggle with multi-step deductions that the 8B model handles with ease.
+Emanuele Minotti · Stefano Romano
 
-* **Efficacy of Domain Fine-Tuning:**
-    The **LLaMA-8B-FT** demonstrated superior alignment with the intended "Vet Assistant" persona compared to the base models. The fine-tuning process successfully calibrated the model's tone, allowing it to balance empathy with strict safety boundaries (e.g., avoiding definitive medical diagnoses while remaining supportive).
-
-* **Instruction Adherence & Conciseness:**
-    Larger, fine-tuned models tend to exhibit better instruction adherence with less "chatter." In the mathematical reasoning and rewriting tasks, the 8B model provided the most direct and precise answers, whereas the intermediate models (3B) tended towards unnecessary verbosity.
-
----
-
-## 🚀 Deployment & User Interface
-
-To make the model accessible on standard hardware (CPU-only environments), we merged the LoRA adapters into the base model and exported the result to **GGUF format** (8-bit quantization).
-
-The final application is hosted on **Hugging Face Spaces**. It features a user-friendly Chat Interface where users can ask questions about their pets' health.
-
-👉 **Try the VetAI Assistant here:** https://huggingface.co/spaces/stromano02/Iris
-
----
-
-## 🛠️ How to Reproduce
-
-1.  **Environment:** The code is designed to run on Google Colab (T4 GPU).
-2.  **Dependencies:** Install `unsloth`, `transformers`, and `trl` as specified in the first cell of the notebook.
-3.  **Data:** The notebook automatically handles data loading from Hugging Face (`mlabonne/FineTome-100k`) and the custom veterinary JSONL file.
+Licensed under the [MIT License](LICENSE).
